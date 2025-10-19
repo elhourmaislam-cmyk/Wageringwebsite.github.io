@@ -732,6 +732,40 @@ if (preUser) {
 
 // ensure wagers array is in sync on load
 state.wagers = loadOpenWagers();
+// Auto-refresh: periodically sync from storage (keeps wagers & balance up-to-date)
+let __autoRefreshTimer = null;
+function syncFromStorage() {
+  // sync wagers
+  const open = loadOpenWagers();
+  if (JSON.stringify(open) !== JSON.stringify(state.wagers)) {
+    state.wagers = open;
+    if (state.loggedIn && !state.ongoing) renderAreas();
+  }
+  // sync balance for the current user (in case another tab updated it)
+  if (state.loggedIn && state.username) {
+    const bal = loadUserBalance(state.username) || 100;
+    if (bal !== state.balance) { state.balance = bal; updateBalance(); }
+  }
+}
+
+function startAutoRefresh(intervalMs = 3000) {
+  if (__autoRefreshTimer) return;
+  __autoRefreshTimer = setInterval(syncFromStorage, intervalMs);
+}
+
+function stopAutoRefresh() {
+  if (!__autoRefreshTimer) return;
+  clearInterval(__autoRefreshTimer);
+  __autoRefreshTimer = null;
+}
+
+// Pause polling when page is hidden to save CPU
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) stopAutoRefresh(); else startAutoRefresh();
+});
+
+// start polling immediately
+startAutoRefresh();
 
 // Cross-tab updates: listen for storage changes to openWagers or currentUser
 window.addEventListener('storage', (e) => {
