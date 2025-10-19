@@ -136,6 +136,36 @@ function saveUserBalance(username, balance) {
   localStorage.setItem('userBalances', JSON.stringify(balances));
 }
 
+/* ====== Cross-tab Wager / Match Storage ====== */
+function loadOpenWagers() {
+  try {
+    return JSON.parse(localStorage.getItem('openWagers') || '[]');
+  } catch (e) { return []; }
+}
+
+function saveOpenWagers(wagers) {
+  localStorage.setItem('openWagers', JSON.stringify(wagers));
+}
+
+function loadActiveMatches() {
+  try {
+    return JSON.parse(localStorage.getItem('activeMatches') || '[]');
+  } catch (e) { return []; }
+}
+
+function saveActiveMatches(matches) {
+  localStorage.setItem('activeMatches', JSON.stringify(matches));
+}
+
+function setCurrentUser(username) {
+  if (username) localStorage.setItem('currentUser', username);
+  else localStorage.removeItem('currentUser');
+}
+
+function getCurrentUser() {
+  return localStorage.getItem('currentUser');
+}
+
 /* ====== Auth System ====== */
 function setupAuth() {
   // Initialize users if none exist (for testing)
@@ -174,11 +204,8 @@ function setupAuth() {
       state.loggedIn = true;
       state.username = username;
       state.balance = loadUserBalance(username);
-      el('loginScreen').style.display = 'none';
-      el('gameScreen').style.display = 'flex';
-      el('playerName').textContent = username;
-      updateBalance();
-      renderAreas();
+      setCurrentUser(username);
+      showGameScreen();
     } else {
       el('authError').textContent = 'Invalid username or password.';
     }
@@ -220,6 +247,7 @@ function setupAuth() {
     state.wagers = [];
     state.ongoing = false;
     state.currentMatch = null;
+    setCurrentUser(null);
     el('gameScreen').style.display = 'none';
     el('loginScreen').style.display = 'flex';
     el('loginUsername').value = '';
@@ -230,6 +258,16 @@ function setupAuth() {
     el('authError').textContent = '';
     setStatus('Not Ready');
   });
+}
+
+function showGameScreen() {
+  el('loginScreen').style.display = 'none';
+  el('gameScreen').style.display = 'flex';
+  el('playerName').textContent = state.username;
+  updateBalance();
+  // load open wagers from storage
+  state.wagers = loadOpenWagers();
+  renderAreas();
 }
 
 /* ====== Menu Selection ====== */
@@ -266,17 +304,25 @@ function createWager() {
   const game = state.selectedGame;
   // Assign a unique id so we can track this specific wager across timeouts
   const wid = Date.now() + '-' + Math.random().toString(36).slice(2,8);
-  state.wagers.push({ id: wid, proposer: state.username, game, stake, createdAt: Date.now(), accepted: false });
+  const newWager = { id: wid, proposer: state.username, game, stake, createdAt: Date.now(), accepted: false };
+  // Persist to shared storage so other tabs see it
+  const open = loadOpenWagers();
+  open.push(newWager);
+  saveOpenWagers(open);
+  state.wagers = open;
   setStatus('Wager created. Waiting for opponent...');
   renderAreas();
   // Simulate bot opponent: only accept after 30s and only if this wager
   // still exists and hasn't been accepted by another player.
   setTimeout(() => {
-    // Find this exact wager by id
-    const wager = state.wagers.find(w => w.id === wid);
+    // Bot acceptance only if still open
+    const openNow = loadOpenWagers();
+    const wager = openNow.find(w => w.id === wid);
     if (wager && !wager.accepted) {
-      // Remove only this wager (in case others were created)
-      state.wagers = state.wagers.filter(w => w.id !== wid);
+      // Remove this wager from shared storage
+      const remaining = openNow.filter(w => w.id !== wid);
+      saveOpenWagers(remaining);
+      state.wagers = remaining;
       renderAreas();
       // Bot accepts
       startMatch(wager.game, wager.stake, { opponentIsBot: true });
@@ -293,7 +339,11 @@ function handleWagerClick(e) {
       const idx = Number(cancel.dataset.idx);
       const w = state.wagers[idx];
       if (w && w.proposer === state.username) {
-        state.wagers.splice(idx, 1);
+        // Remove from shared storage
+        const openNow = loadOpenWagers();
+        const remaining = openNow.filter(item => item.id !== w.id);
+        saveOpenWagers(remaining);
+        state.wagers = remaining;
         renderAreas();
         setStatus('Wager cancelled.');
       } else {
@@ -308,10 +358,13 @@ function handleWagerClick(e) {
       const w = state.wagers[idx];
       if (!w) return;
       if (w.proposer === state.username) { alert('You cannot accept your own wager.'); return; }
-      // Mark accepted so the bot timeout won't accept it later
-      w.accepted = true;
-      // Remove this wager and start the match with current player
-      state.wagers.splice(idx, 1);
+      // Atomically remove from storage and start match
+      const openNow = loadOpenWagers();
+      const found = openNow.find(item => item.id === w.id);
+      if (!found) { alert('This wager was taken or cancelled.'); renderAreas(); return; }
+      const remaining = openNow.filter(item => item.id !== w.id);
+      saveOpenWagers(remaining);
+      state.wagers = remaining;
       renderAreas();
       startMatch(w.game, w.stake);
       return;
@@ -324,6 +377,8 @@ function renderAreas() {
   if (state.ongoing) return;
   const areaEl = el('area1');
   areaEl.innerHTML = '';
+  // Ensure we always show the latest shared wagers
+  state.wagers = loadOpenWagers();
   if (state.wagers.length === 0) {
     areaEl.innerHTML = '<div class="center muted">No open challenges. Create one!</div>';
     return;
@@ -664,6 +719,43 @@ setupAuth();
 setupMenus();
 setupWagers();
 updateBalance();
+
+// Initialize state from storage: persistent login and wagers
+const preUser = getCurrentUser();
+if (preUser) {
+  // restore session
+  state.loggedIn = true;
+  state.username = preUser;
+  state.balance = loadUserBalance(preUser) || 100;
+  showGameScreen();
+}
+
+// ensure wagers array is in sync on load
+state.wagers = loadOpenWagers();
+
+// Cross-tab updates: listen for storage changes to openWagers or currentUser
+window.addEventListener('storage', (e) => {
+  if (e.key === 'openWagers') {
+    state.wagers = loadOpenWagers();
+    // If on game screen and not in a match, re-render
+    if (state.loggedIn && !state.ongoing) renderAreas();
+  }
+  if (e.key === 'currentUser') {
+    const cu = getCurrentUser();
+    if (!cu) {
+      // logged out elsewhere
+      if (state.loggedIn) {
+        // Save current balance and force logout
+        saveUserBalance(state.username, state.balance);
+        state.loggedIn = false;
+        state.username = '';
+        el('gameScreen').style.display = 'none';
+        el('loginScreen').style.display = 'flex';
+      }
+    }
+    // If someone logged in on another tab as this user, nothing to change here
+  }
+});
 </script>
 </body>
 </html>
