@@ -76,6 +76,12 @@ button.primary { margin-top: 10px; padding: 10px 14px; border-radius: 10px; bord
       <button class="primary small" id="logoutBtn">Logout</button>
     </div>
   </div>
+  <div id="ghNotice" style="max-width:600px;margin:84px auto 12px;display:none;">
+    <div style="background:#2b2b2b;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);color:#ffd;">
+      <strong>Hosting note:</strong>
+      <div id="ghNoticeText" style="margin-top:6px;font-size:13px;color:#cfe"></div>
+    </div>
+  </div>
   <header>
     <h2 id="playerName">Player</h2>
     <div class="balance">Tokens: <span id="bal1">100</span></div>
@@ -664,6 +670,33 @@ setupAuth();
 setupMenus();
 setupWagers();
 updateBalance();
+
+// GitHub Pages / hosting compatibility checks
+;(function(){
+  const notice = document.getElementById('ghNotice');
+  const noticeText = document.getElementById('ghNoticeText');
+  let show = false;
+  let msgs = [];
+  // If opened via file://, Firebase Auth won't work — recommend local server
+  if (location.protocol === 'file:') {
+    show = true;
+    msgs.push('You opened the HTML from file:// — Firebase Auth and some network features require serving over http(s). Run a local server (e.g. `python3 -m http.server`) and open http://localhost:8000');
+  }
+  // If file name has spaces it may break GH Pages; recommend index.html
+  if (location.pathname && location.pathname.includes('%20')) {
+    show = true;
+    msgs.push('Filename contains spaces — GitHub Pages prefers files named `index.html` without spaces. Rename the file to `index.html` and push to gh-pages branch/root.');
+  }
+  // If running under github.io but firebase config not allowed, instruct about authorized domains
+  if (location.hostname && location.hostname.endsWith('github.io')) {
+    show = true;
+    msgs.push('If Firebase shows auth/configuration-not-found, add your GitHub Pages domain to Firebase Console → Authentication → Authorized domains.');
+  }
+  if (show && notice && noticeText) {
+    noticeText.innerHTML = msgs.map(m => `<div>${m}</div>`).join('');
+    notice.style.display = 'block';
+  }
+})();
 </script>
 </body>
 </html>
