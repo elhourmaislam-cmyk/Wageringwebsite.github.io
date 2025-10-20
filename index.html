@@ -76,12 +76,6 @@ button.primary { margin-top: 10px; padding: 10px 14px; border-radius: 10px; bord
       <button class="primary small" id="logoutBtn">Logout</button>
     </div>
   </div>
-  <div id="ghNotice" style="max-width:600px;margin:84px auto 12px;display:none;">
-    <div style="background:#2b2b2b;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);color:#ffd;">
-      <strong>Hosting note:</strong>
-      <div id="ghNoticeText" style="margin-top:6px;font-size:13px;color:#cfe"></div>
-    </div>
-  </div>
   <header>
     <h2 id="playerName">Player</h2>
     <div class="balance">Tokens: <span id="bal1">100</span></div>
@@ -284,8 +278,7 @@ function createWager() {
       // Remove only this wager (in case others were created)
       state.wagers = state.wagers.filter(w => w.id !== wid);
       renderAreas();
-      // Bot accepts
-      startMatch(wager.game, wager.stake, { opponentIsBot: true });
+      startMatch(wager.game, wager.stake);
     }
   }, 30000);
 }
@@ -357,10 +350,9 @@ function renderAreas() {
 }
 
 /* ====== Match Lifecycle ====== */
-function startMatch(game, stake, opts = {}) {
-  const opponentIsBot = !!opts.opponentIsBot;
+function startMatch(game, stake) {
   state.ongoing = true;
-  state.currentMatch = { game, stake, startedAt: Date.now(), opponentIsBot };
+  state.currentMatch = { game, stake, startedAt: Date.now() };
   state.balance -= stake;
   updateBalance();
   setStatus('Match starting: ' + prettyGameName(game));
@@ -395,9 +387,6 @@ function renderReaction() {
   box.append(text, document.createElement('br'), btn);
   area.appendChild(box);
   let go = false, resolved = false;
-  // Bot reaction helpers
-  let botReacted = false;
-  let botTimeoutId = null;
   btn.addEventListener('click', () => handleClick());
   function handleClick() {
     if (resolved) return;
@@ -408,19 +397,11 @@ function renderReaction() {
     }
     resolved = true;
     const playerTime = Date.now() - state.currentMatch.startedAt;
-    const opponentIsBot = state.currentMatch && state.currentMatch.opponentIsBot;
-    if (opponentIsBot) {
-      // If bot already reacted, player loses
-      if (botReacted) { finalizeMatch(false, 'Bot reacted faster!'); return; }
-      // Otherwise simulate bot time
-      const opponentTime = (botTimeoutId ? (Date.now() - state.currentMatch.startedAt) : playerTime + Math.random() * 500 - 250);
-      if (playerTime < opponentTime) finalizeMatch(true, 'You reacted faster!');
-      else finalizeMatch(false, 'Bot reacted faster!');
-      if (botTimeoutId) clearTimeout(botTimeoutId);
+    const opponentTime = playerTime + Math.random() * 500 - 250; // Simulate opponent
+    if (playerTime < opponentTime) {
+      finalizeMatch(true, 'You reacted faster!');
     } else {
-      const opponentTime = playerTime + Math.random() * 500 - 250; // Simulate opponent
-      if (playerTime < opponentTime) finalizeMatch(true, 'You reacted faster!');
-      else finalizeMatch(false, 'Opponent reacted faster!');
+      finalizeMatch(false, 'Opponent reacted faster!');
     }
   }
   const delay = 1200 + Math.floor(Math.random() * 2000);
@@ -428,16 +409,6 @@ function renderReaction() {
     go = true;
     text.textContent = 'GO!';
     btn.disabled = false;
-    // Schedule bot reaction when GO appears
-    if (state.currentMatch && state.currentMatch.opponentIsBot) {
-      const botDelay = 200 + Math.floor(Math.random() * 400); // 200 - 600ms
-      botTimeoutId = setTimeout(() => {
-        if (resolved) return;
-        botReacted = true;
-        resolved = true;
-        finalizeMatch(false, 'Bot reacted faster!');
-      }, botDelay);
-    }
   }, delay);
   setTimeout(() => {
     if (!resolved) {
@@ -462,9 +433,6 @@ function renderMathSprint() {
   area.appendChild(box);
   let resolved = false;
   const startTime = Date.now();
-  // Bot answering state
-  let botAnswered = false;
-  let botAnswer = null;
   const submit = el('submit1');
   const inp = el('input1');
   submit.addEventListener('click', () => handleSubmit(inp.value));
@@ -478,42 +446,22 @@ function renderMathSprint() {
     msg.textContent = correct ? `Correct! (${time} ms)` : `Wrong (${time} ms)`;
     if (correct) {
       resolved = true;
-      const opponentIsBot = state.currentMatch && state.currentMatch.opponentIsBot;
-      if (opponentIsBot) {
-        // If bot answered correctly earlier, player loses
-        if (botAnswered && botAnswer && botAnswer.correct) {
-          finalizeMatch(false, 'Bot answered first!');
-          return;
-        }
-        const opponentTime = botAnswered && botAnswer ? botAnswer.time : (time + Math.random() * 1000 - 500);
-        if (time < opponentTime) finalizeMatch(true, `Answered correctly in ${time} ms`);
-        else finalizeMatch(false, 'Bot answered faster!');
+      const opponentTime = time + Math.random() * 1000 - 500;
+      if (time < opponentTime) {
+        finalizeMatch(true, `Answered correctly in ${time} ms`);
       } else {
-        const opponentTime = time + Math.random() * 1000 - 500;
-        if (time < opponentTime) finalizeMatch(true, `Answered correctly in ${time} ms`);
-        else finalizeMatch(false, 'Opponent answered faster!');
+        finalizeMatch(false, 'Opponent answered faster!');
       }
     } else {
       resolved = true;
       const d1 = Math.abs(numeric - problem.answer);
       const d2 = Math.abs((Math.random() * 20 - 10) - problem.answer); // Simulate opponent
-      if (d1 < d2) finalizeMatch(true, 'Both wrong, but you were closer!');
-      else finalizeMatch(false, 'Both wrong, opponent was closer!');
-    }
-  }
-  // If opponent is bot, schedule its answer
-  if (state.currentMatch && state.currentMatch.opponentIsBot) {
-    const willBeCorrect = Math.random() < 0.8; // 80% chance to be correct
-    const botDelay = 400 + Math.floor(Math.random() * 1600); // 400-2000ms
-    setTimeout(() => {
-      if (resolved) return;
-      botAnswered = true;
-      botAnswer = { correct: willBeCorrect, time: Date.now() - startTime };
-      if (willBeCorrect) {
-        resolved = true;
-        finalizeMatch(false, 'Bot answered correctly first!');
+      if (d1 < d2) {
+        finalizeMatch(true, 'Both wrong, but you were closer!');
+      } else {
+        finalizeMatch(false, 'Both wrong, opponent was closer!');
       }
-    }, botDelay);
+    }
   }
   setTimeout(() => {
     if (!resolved) {
@@ -587,10 +535,7 @@ function renderTicTacToe() {
     setTimeout(() => {
       const available = gameBoard.map((v, i) => v === null ? i : null).filter(v => v !== null);
       if (available.length > 0) {
-        const opponentIsBot = state.currentMatch && state.currentMatch.opponentIsBot;
-        let move;
-        if (opponentIsBot) move = tttBotChooseMove(gameBoard, 2, 1);
-        else move = available[Math.floor(Math.random() * available.length)];
+        const move = available[Math.floor(Math.random() * available.length)];
         gameBoard[move] = 2;
         syncRender();
         const winner = checkTTTWinner(gameBoard);
@@ -613,28 +558,6 @@ function renderTicTacToe() {
       if (b[a] && b[a] === b[b2] && b[a] === b[c]) return b[a];
     }
     return null;
-  }
-
-  // Simple TTT bot: try to win, block player, take center, take corners, else random
-  function tttBotChooseMove(board, myMark = 2, oppMark = 1) {
-    const lines = [ [0,1,2], [3,4,5], [6,7,8], [0,3,6], [1,4,7], [2,5,8], [0,4,8], [2,4,6] ];
-    // helper to find winning/blocking move
-    for (const mark of [myMark, oppMark]) {
-      for (const [a,b,c] of lines) {
-        const vals = [board[a], board[b], board[c]];
-        const empties = [a,b,c].filter(i => board[i] === null);
-        const countMark = vals.filter(v => v === mark).length;
-        if (countMark === 2 && empties.length === 1) return empties[0];
-      }
-    }
-    // center
-    if (board[4] === null) return 4;
-    // corners
-    const corners = [0,2,6,8].filter(i => board[i] === null);
-    if (corners.length > 0) return corners[Math.floor(Math.random() * corners.length)];
-    // fallback: any empty
-    const empties = board.map((v,i) => v === null ? i : null).filter(v => v !== null);
-    return empties[Math.floor(Math.random() * empties.length)];
   }
 }
 
@@ -670,33 +593,6 @@ setupAuth();
 setupMenus();
 setupWagers();
 updateBalance();
-
-// GitHub Pages / hosting compatibility checks
-;(function(){
-  const notice = document.getElementById('ghNotice');
-  const noticeText = document.getElementById('ghNoticeText');
-  let show = false;
-  let msgs = [];
-  // If opened via file://, Firebase Auth won't work — recommend local server
-  if (location.protocol === 'file:') {
-    show = true;
-    msgs.push('You opened the HTML from file:// — Firebase Auth and some network features require serving over http(s). Run a local server (e.g. `python3 -m http.server`) and open http://localhost:8000');
-  }
-  // If file name has spaces it may break GH Pages; recommend index.html
-  if (location.pathname && location.pathname.includes('%20')) {
-    show = true;
-    msgs.push('Filename contains spaces — GitHub Pages prefers files named `index.html` without spaces. Rename the file to `index.html` and push to gh-pages branch/root.');
-  }
-  // If running under github.io but firebase config not allowed, instruct about authorized domains
-  if (location.hostname && location.hostname.endsWith('github.io')) {
-    show = true;
-    msgs.push('If Firebase shows auth/configuration-not-found, add your GitHub Pages domain to Firebase Console → Authentication → Authorized domains.');
-  }
-  if (show && notice && noticeText) {
-    noticeText.innerHTML = msgs.map(m => `<div>${m}</div>`).join('');
-    notice.style.display = 'block';
-  }
-})();
 </script>
 </body>
 </html>
