@@ -1,4 +1,52 @@
-let socket = null;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Challenge Arena — Tokens</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #050507;
+  --panel: #0f1113;
+  --accent1: #00ffff;
+  --accent2: #7cff66;
+  --glass: rgba(255,255,255,0.03);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; font-family: 'Poppins', sans-serif; background: radial-gradient(1200px 600px at 10% 10%, rgba(0,255,204,0.03), transparent), linear-gradient(180deg,#030304 0%, #07070a 100%); color: #eafcff; }
+.container { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; padding: 24px; }
+.panel { width: 100%; max-width: 500px; background: var(--panel); border-radius: 12px; padding: 14px; box-shadow: 0 6px 28px rgba(2,8,12,0.6), inset 0 0 30px rgba(0,255,204,0.02); border: 1px solid rgba(0,255,204,0.06); }
+header { width: 100%; text-align: center; margin-bottom: 12px; }
+h2 { margin: 6px 0; font-size: 20px; letter-spacing: 1px; }
+.balance { margin: 6px 0; color: var(--accent2); font-weight: 600; }
+button.primary { margin-top: 10px; padding: 10px 14px; border-radius: 10px; border: none; font-weight: 700; cursor: pointer; background: linear-gradient(90deg, var(--accent1), var(--accent2)); color: #001; box-shadow: 0 6px 18px rgba(0,255,204,0.08); }
+.muted { color: #9fb8b2; font-size: 13px; }
+.controls { display: flex; gap: 10px; margin-top: 10px; align-items: center; justify-content: center; }
+.stake-input { width: 110px; padding: 8px; border-radius: 8px; border: 1px solid rgba(0,255,204,0.08); background: #050607; color: var(--accent1); font-weight: 600; text-align: center; }
+.game-menu { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; justify-content: center; }
+.game-option { padding: 8px 10px; border-radius: 10px; background: var(--glass); border: 1px solid rgba(255,255,255,0.02); cursor: pointer; font-weight: 600; }
+.game-option.active { box-shadow: 0 8px 28px rgba(0,255,204,0.06); border: 1px solid rgba(0,255,204,0.12); }
+.board-area { margin-top: 14px; width: 100%; display: flex; justify-content: center; align-items: center; min-height: 220px; flex-direction: column; }
+.status { margin-top: 10px; font-weight: 600; color: #cde; text-align: center; }
+.ready-btn { width: 120px; }
+.large-btn { padding: 18px 22px; font-size: 18px; border-radius: 12px; background: linear-gradient(90deg, var(--accent1), var(--accent2)); color: #001; border: none; cursor: pointer; }
+.go-box { padding: 22px 18px; border-radius: 12px; background: #020304; border: 1px solid rgba(0,255,204,0.06); }
+.countdown { font-size: 28px; font-weight: 700; letter-spacing: 2px; }
+.ttt-grid { display: grid; grid-template-columns: repeat(3, 80px); gap: 8px; justify-content: center; }
+.ttt-cell { width: 80px; height: 80px; border-radius: 10px; background: #080a0b; display: flex; align-items: center; justify-content: center; font-size: 34px; cursor: pointer; border: 1px solid rgba(0,255,204,0.03); }
+.ttt-cell:hover { transform: translateY(-3px); }
+.topbar { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 12px; align-items: center; z-index: 30; }
+.title { font-size: 20px; font-weight: 700; background: linear-gradient(90deg, var(--accent1), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.global-controls { display: flex; gap: 8px; align-items: center; background: rgba(0,0,0,0.45); padding: 8px 12px; border-radius: 12px; border: 1px solid rgba(0,255,204,0.04); }
+.small { font-size: 13px; color: #9fc9c2; }
+.glow-win { box-shadow: 0 0 30px rgba(124,255,102,0.12), 0 0 80px rgba(0,255,204,0.03); }
+.center { display: flex; align-items: center; justify-content: center; }
+.login-container { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
+.login-panel { background: var(--panel); padding: 20px; border-radius: 12px; width: 300px; text-align: center; }
+.login-input { width: 100%; padding: 8px; margin: 8px 0; border-radius: 8px; border: 1px solid rgba(0,255,204,0.08); background: #050607; color: var(--accent1); }
+.login-btn { width: 100%; }
+.toggle-btn { cursor: pointer; color: var(--accent1); text-decoration: underline; margin-top: 10px; }
 </style>
 </head>
 <body>
@@ -52,95 +100,6 @@ let socket = null;
   </div>
 </div>
 <script>
-// Attempt to connect to socket.io server if available. If not, fall back to localStorage sync.
-let socket = null;
-// Optional Supabase realtime DB (for GitHub Pages compatibility).
-// To enable: create a Supabase project, create table `open_wagers` with columns (id text primary key, proposer text, game text, stake int, createdAt timestamptz)
-// then set SUPABASE_URL and SUPABASE_ANON_KEY below (or set them via a build process/environment).
-let supabase = null;
-const SUPABASE_URL = ''; // e.g. https://xyzcompany.supabase.co
-const SUPABASE_ANON_KEY = ''; // your anon/public key
-
-async function tryConnectSupabase() {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return;
-  try {
-    const mod = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm');
-    const { createClient } = mod;
-    supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    await fetchWagersFromSupabase();
-    subscribeWagersFromSupabase();
-    console.log('Connected to Supabase');
-  } catch (err) {
-    console.warn('Supabase connect failed', err);
-    supabase = null;
-  }
-}
-
-async function fetchWagersFromSupabase() {
-  if (!supabase) return;
-  try {
-    const { data, error } = await supabase
-      .from('open_wagers')
-      .select('*')
-      .order('createdAt', { ascending: true });
-    if (error) { console.warn('supabase fetch error', error); return; }
-    state.wagers = data || [];
-    // update local cache for non-supabase clients
-    try { localStorage.setItem('openWagers', JSON.stringify(state.wagers)); } catch (e) {}
-    if (state.loggedIn && !state.ongoing) renderAreas();
-  } catch (e) { console.warn(e); }
-}
-
-function subscribeWagersFromSupabase() {
-  if (!supabase) return;
-  try {
-    const channel = supabase.channel('public:open_wagers');
-    channel.on('postgres_changes', { event: '*', schema: 'public', table: 'open_wagers' }, payload => {
-      // Re-fetch the list for simplicity (diffs could be applied from payload)
-      fetchWagersFromSupabase();
-    });
-    channel.subscribe();
-  } catch (e) { console.warn('supabase subscribe error', e); }
-}
-function tryConnectSocket() {
-  try {
-    // load socket.io client script dynamically from same server
-    const s = document.createElement('script');
-    s.src = '/socket.io/socket.io.js';
-    s.onload = () => {
-      socket = io();
-      setupSocketHandlers();
-    };
-    s.onerror = () => { socket = null; };
-    document.head.appendChild(s);
-  } catch (e) {
-    socket = null;
-  }
-}
-
-function setupSocketHandlers() {
-  if (!socket) return;
-  socket.on('connect', () => {
-    console.log('connected to socket server', socket.id);
-  });
-  socket.on('wagers', (wagers) => {
-    // replace local wagers with server state
-    state.wagers = Array.isArray(wagers) ? wagers : [];
-    // update localStorage cache for clients without socket
-    try { localStorage.setItem('openWagers', JSON.stringify(state.wagers)); } catch(e) {}
-    if (state.loggedIn && !state.ongoing) renderAreas();
-  });
-  socket.on('acceptSuccess', (data) => {
-    // data: { id, wager }
-    // The accepter should start a match locally
-    if (data && data.wager) startMatch(data.wager.game, data.wager.stake);
-  });
-  socket.on('acceptFailed', (data) => {
-    alert('Accept failed: ' + (data && data.reason));
-    // refresh local state
-    if (state.loggedIn && !state.ongoing) renderAreas();
-  });
-}
 /* ====== State ====== */
 const state = {
   loggedIn: false,
@@ -175,36 +134,6 @@ function saveUserBalance(username, balance) {
   const balances = JSON.parse(localStorage.getItem('userBalances') || '{}');
   balances[username] = balance;
   localStorage.setItem('userBalances', JSON.stringify(balances));
-}
-
-/* ====== Cross-tab Wager / Match Storage ====== */
-function loadOpenWagers() {
-  try {
-    return JSON.parse(localStorage.getItem('openWagers') || '[]');
-  } catch (e) { return []; }
-}
-
-function saveOpenWagers(wagers) {
-  localStorage.setItem('openWagers', JSON.stringify(wagers));
-}
-
-function loadActiveMatches() {
-  try {
-    return JSON.parse(localStorage.getItem('activeMatches') || '[]');
-  } catch (e) { return []; }
-}
-
-function saveActiveMatches(matches) {
-  localStorage.setItem('activeMatches', JSON.stringify(matches));
-}
-
-function setCurrentUser(username) {
-  if (username) localStorage.setItem('currentUser', username);
-  else localStorage.removeItem('currentUser');
-}
-
-function getCurrentUser() {
-  return localStorage.getItem('currentUser');
 }
 
 /* ====== Auth System ====== */
@@ -245,8 +174,11 @@ function setupAuth() {
       state.loggedIn = true;
       state.username = username;
       state.balance = loadUserBalance(username);
-      setCurrentUser(username);
-      showGameScreen();
+      el('loginScreen').style.display = 'none';
+      el('gameScreen').style.display = 'flex';
+      el('playerName').textContent = username;
+      updateBalance();
+      renderAreas();
     } else {
       el('authError').textContent = 'Invalid username or password.';
     }
@@ -288,7 +220,6 @@ function setupAuth() {
     state.wagers = [];
     state.ongoing = false;
     state.currentMatch = null;
-    setCurrentUser(null);
     el('gameScreen').style.display = 'none';
     el('loginScreen').style.display = 'flex';
     el('loginUsername').value = '';
@@ -299,16 +230,6 @@ function setupAuth() {
     el('authError').textContent = '';
     setStatus('Not Ready');
   });
-}
-
-function showGameScreen() {
-  el('loginScreen').style.display = 'none';
-  el('gameScreen').style.display = 'flex';
-  el('playerName').textContent = state.username;
-  updateBalance();
-  // load open wagers from storage
-  state.wagers = loadOpenWagers();
-  renderAreas();
 }
 
 /* ====== Menu Selection ====== */
@@ -345,37 +266,20 @@ function createWager() {
   const game = state.selectedGame;
   // Assign a unique id so we can track this specific wager across timeouts
   const wid = Date.now() + '-' + Math.random().toString(36).slice(2,8);
-  const newWager = { id: wid, proposer: state.username, game, stake, createdAt: Date.now(), accepted: false };
-  if (socket && socket.connected) {
-    socket.emit('createWager', newWager);
-  } else {
-    // Persist to shared storage so other tabs see it
-    const open = loadOpenWagers();
-    open.push(newWager);
-    saveOpenWagers(open);
-    state.wagers = open;
-  }
+  state.wagers.push({ id: wid, proposer: state.username, game, stake, createdAt: Date.now(), accepted: false });
   setStatus('Wager created. Waiting for opponent...');
   renderAreas();
   // Simulate bot opponent: only accept after 30s and only if this wager
   // still exists and hasn't been accepted by another player.
   setTimeout(() => {
-    // Bot acceptance only if still open
-    const openNow = loadOpenWagers();
-    const wager = openNow.find(w => w.id === wid);
+    // Find this exact wager by id
+    const wager = state.wagers.find(w => w.id === wid);
     if (wager && !wager.accepted) {
-      // If connected to server, let server handle removal and notify clients
-      if (socket && socket.connected) {
-        socket.emit('cancelWager', wid);
-      } else {
-        // Remove this wager from shared storage
-        const remaining = openNow.filter(w => w.id !== wid);
-        saveOpenWagers(remaining);
-        state.wagers = remaining;
-        renderAreas();
-        // Bot accepts
-        startMatch(wager.game, wager.stake, { opponentIsBot: true });
-      }
+      // Remove only this wager (in case others were created)
+      state.wagers = state.wagers.filter(w => w.id !== wid);
+      renderAreas();
+      // Bot accepts
+      startMatch(wager.game, wager.stake, { opponentIsBot: true });
     }
   }, 30000);
 }
@@ -389,21 +293,9 @@ function handleWagerClick(e) {
       const idx = Number(cancel.dataset.idx);
       const w = state.wagers[idx];
       if (w && w.proposer === state.username) {
-        // Cancel: prefer supabase, then server, then localStorage
-        if (supabase) {
-          supabase.from('open_wagers').delete().eq('id', w.id).then(() => {
-            // subscription will refresh
-          }).catch(e => console.warn('supabase delete error', e));
-        } else if (socket && socket.connected) {
-          socket.emit('cancelWager', w.id);
-        } else {
-          const openNow = loadOpenWagers();
-          const remaining = openNow.filter(item => item.id !== w.id);
-          saveOpenWagers(remaining);
-          state.wagers = remaining;
-          renderAreas();
-          setStatus('Wager cancelled.');
-        }
+        state.wagers.splice(idx, 1);
+        renderAreas();
+        setStatus('Wager cancelled.');
       } else {
         alert("Cannot cancel this wager.");
       }
@@ -416,20 +308,12 @@ function handleWagerClick(e) {
       const w = state.wagers[idx];
       if (!w) return;
       if (w.proposer === state.username) { alert('You cannot accept your own wager.'); return; }
-      // Atomically remove from storage and start match
-      const openNow = loadOpenWagers();
-      if (socket && socket.connected) {
-        socket.emit('acceptWager', w.id);
-        // server will reply with acceptSuccess/acceptFailed
-      } else {
-        const found = openNow.find(item => item.id === w.id);
-        if (!found) { alert('This wager was taken or cancelled.'); renderAreas(); return; }
-        const remaining = openNow.filter(item => item.id !== w.id);
-        saveOpenWagers(remaining);
-        state.wagers = remaining;
-        renderAreas();
-        startMatch(w.game, w.stake);
-      }
+      // Mark accepted so the bot timeout won't accept it later
+      w.accepted = true;
+      // Remove this wager and start the match with current player
+      state.wagers.splice(idx, 1);
+      renderAreas();
+      startMatch(w.game, w.stake);
       return;
     }
   }
@@ -440,8 +324,6 @@ function renderAreas() {
   if (state.ongoing) return;
   const areaEl = el('area1');
   areaEl.innerHTML = '';
-  // Ensure we always show the latest shared wagers
-  state.wagers = loadOpenWagers();
   if (state.wagers.length === 0) {
     areaEl.innerHTML = '<div class="center muted">No open challenges. Create one!</div>';
     return;
@@ -782,80 +664,6 @@ setupAuth();
 setupMenus();
 setupWagers();
 updateBalance();
-
-// Initialize state from storage: persistent login and wagers
-const preUser = getCurrentUser();
-if (preUser) {
-  // restore session
-  state.loggedIn = true;
-  state.username = preUser;
-  state.balance = loadUserBalance(preUser) || 100;
-  showGameScreen();
-}
-
-// ensure wagers array is in sync on load
-state.wagers = loadOpenWagers();
-// Auto-refresh: periodically sync from storage (keeps wagers & balance up-to-date)
-let __autoRefreshTimer = null;
-function syncFromStorage() {
-  // sync wagers
-  const open = loadOpenWagers();
-  if (JSON.stringify(open) !== JSON.stringify(state.wagers)) {
-    state.wagers = open;
-    if (state.loggedIn && !state.ongoing) renderAreas();
-  }
-  // sync balance for the current user (in case another tab updated it)
-  if (state.loggedIn && state.username) {
-    const bal = loadUserBalance(state.username) || 100;
-    if (bal !== state.balance) { state.balance = bal; updateBalance(); }
-  }
-}
-
-function startAutoRefresh(intervalMs = 3000) {
-  if (__autoRefreshTimer) return;
-  __autoRefreshTimer = setInterval(syncFromStorage, intervalMs);
-}
-
-function stopAutoRefresh() {
-  if (!__autoRefreshTimer) return;
-  clearInterval(__autoRefreshTimer);
-  __autoRefreshTimer = null;
-}
-
-// Pause polling when page is hidden to save CPU
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) stopAutoRefresh(); else startAutoRefresh();
-});
-
-// start polling immediately
-startAutoRefresh();
-
-// Try to connect to socket server (if the server is running alongside the site)
-tryConnectSocket();
-
-// Cross-tab updates: listen for storage changes to openWagers or currentUser
-window.addEventListener('storage', (e) => {
-  if (e.key === 'openWagers') {
-    state.wagers = loadOpenWagers();
-    // If on game screen and not in a match, re-render
-    if (state.loggedIn && !state.ongoing) renderAreas();
-  }
-  if (e.key === 'currentUser') {
-    const cu = getCurrentUser();
-    if (!cu) {
-      // logged out elsewhere
-      if (state.loggedIn) {
-        // Save current balance and force logout
-        saveUserBalance(state.username, state.balance);
-        state.loggedIn = false;
-        state.username = '';
-        el('gameScreen').style.display = 'none';
-        el('loginScreen').style.display = 'flex';
-      }
-    }
-    // If someone logged in on another tab as this user, nothing to change here
-  }
-});
 </script>
 </body>
 </html>
