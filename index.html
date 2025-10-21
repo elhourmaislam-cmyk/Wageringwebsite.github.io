@@ -54,13 +54,13 @@ button.primary { margin-top: 10px; padding: 10px 14px; border-radius: 10px; bord
   <div class="login-panel" id="authPanel">
     <h2 id="authTitle">Login to Challenge Arena</h2>
     <div id="loginForm">
-      <input id="loginUsername" class="login-input" type="text" placeholder="Username" />
+      <input id="loginUsername" class="login-input" type="email" placeholder="Email" />
       <input id="loginPassword" class="login-input" type="password" placeholder="Password" />
       <button class="primary login-btn" id="loginBtn">Login</button>
       <div class="small muted toggle-btn" id="showSignup">Need an account? Sign Up</div>
     </div>
     <div id="signupForm" style="display: none;">
-      <input id="signupUsername" class="login-input" type="text" placeholder="Username" />
+      <input id="signupUsername" class="login-input" type="email" placeholder="Email" />
       <input id="signupPassword" class="login-input" type="password" placeholder="Password" />
       <input id="signupConfirmPassword" class="login-input" type="password" placeholder="Confirm Password" />
       <button class="primary login-btn" id="signupBtn">Sign Up</button>
@@ -101,6 +101,7 @@ button.primary { margin-top: 10px; padding: 10px 14px; border-radius: 10px; bord
 </div>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 // Your web app's Firebase configuration
@@ -116,12 +117,14 @@ const firebaseConfig = {
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
 const db = getFirestore(app);
 
 /* ====== State ====== */
 const state = {
   loggedIn: false,
-  username: '',
+  userId: '',  // Use UID instead of username
+  username: '',  // We'll set this to email for display
   balance: 100,
   selectedGame: 'reaction',
   ongoing: false,
@@ -137,17 +140,49 @@ let unsubscribeWagers = null;
 
 /* ====== User Balance Update ====== */
 async function updateUserBalance() {
-  if (state.username) {
-    try {
-      await updateDoc(doc(db, 'users', state.username), { balance: state.balance });
-    } catch (error) {
-      console.error('Update balance error:', error);
-    }
+  if (state.userId) {
+    await updateDoc(doc(db, 'users', state.userId), { balance: state.balance });
   }
+}
+
+/* ====== Fetch User Data ====== */
+async function fetchUserData(user) {
+  const userDoc = doc(db, 'users', user.uid);
+  const userSnap = await getDoc(userDoc);
+  if (userSnap.exists()) {
+    state.balance = userSnap.data().balance || 100;
+  } else {
+    // If no doc, create one
+    await setDoc(userDoc, { balance: 100 });
+    state.balance = 100;
+  }
+  updateBalance();
 }
 
 /* ====== Auth System ====== */
 function setupAuth() {
+  // Listen for auth state changes (persists login)
+  onAuthStateChanged(auth, (user) => {
+    if (user) {
+      state.loggedIn = true;
+      state.userId = user.uid;
+      state.username = user.email;  // Use email as display name
+      el('loginScreen').style.display = 'none';
+      el('gameScreen').style.display = 'flex';
+      el('playerName').textContent = state.username;
+      fetchUserData(user);
+      renderAreas();
+      setupWagerListener();
+    } else {
+      state.loggedIn = false;
+      state.userId = '';
+      state.username = '';
+      state.balance = 100;
+      el('gameScreen').style.display = 'none';
+      el('loginScreen').style.display = 'flex';
+    }
+  });
+
   // Toggle between login and signup
   el('showSignup').addEventListener('click', () => {
     el('loginForm').style.display = 'none';
@@ -170,36 +205,22 @@ function setupAuth() {
 
   // Login
   el('loginBtn').addEventListener('click', async () => {
-    const username = el('loginUsername').value.trim();
+    const email = el('loginUsername').value.trim();
     const password = el('loginPassword').value.trim();
     try {
-      const userRef = doc(db, 'users', username);
-      const userSnap = await getDoc(userRef);
-      if (userSnap.exists() && userSnap.data().password === password) {
-        state.loggedIn = true;
-        state.username = username;
-        state.balance = userSnap.data().balance || 100;
-        el('loginScreen').style.display = 'none';
-        el('gameScreen').style.display = 'flex';
-        el('playerName').textContent = username;
-        updateBalance();
-        renderAreas();
-        setupWagerListener();
-      } else {
-        el('authError').textContent = 'Invalid username or password.';
-      }
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      // Auth state change will handle the rest
     } catch (error) {
-      console.error('Login error:', error);
-      el('authError').textContent = 'Error: ' + error.message;
+      el('authError').textContent = 'Error: ' + (error.message || 'Login failed');
     }
   });
 
   // Sign Up
   el('signupBtn').addEventListener('click', async () => {
-    const username = el('signupUsername').value.trim();
+    const email = el('signupUsername').value.trim();
     const password = el('signupPassword').value.trim();
     const confirmPassword = el('signupConfirmPassword').value.trim();
-    if (!username || !password || !confirmPassword) {
+    if (!email || !password || !confirmPassword) {
       el('authError').textContent = 'All fields are required.';
       return;
     }
@@ -208,18 +229,14 @@ function setupAuth() {
       return;
     }
     try {
-      const userRef = doc(db, 'users', username);
-      const userSnap = await getDoc(userRef);
-      if (userSnap.exists()) {
-        el('authError').textContent = 'Username already taken.';
-        return;
-      }
-      await setDoc(userRef, { password, balance: 100 });
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+      // Create Firestore doc
+      await setDoc(doc(db, 'users', user.uid), { balance: 100 });
       el('authError').textContent = 'Sign-up successful! Please log in.';
       el('showLogin').click();
     } catch (error) {
-      console.error('Sign-up error:', error);
-      el('authError').textContent = 'Sign-up failed: ' + error.message;
+      el('authError').textContent = 'Error: ' + (error.message || 'Signup failed');
     }
   });
 
@@ -227,21 +244,8 @@ function setupAuth() {
   el('logoutBtn').addEventListener('click', async () => {
     await updateUserBalance();
     if (unsubscribeWagers) unsubscribeWagers();
-    state.loggedIn = false;
-    state.username = '';
-    state.balance = 100;
-    state.wagers = [];
-    state.ongoing = false;
-    state.currentMatch = null;
-    el('gameScreen').style.display = 'none';
-    el('loginScreen').style.display = 'flex';
-    el('loginUsername').value = '';
-    el('loginPassword').value = '';
-    el('signupUsername').value = '';
-    el('signupPassword').value = '';
-    el('signupConfirmPassword').value = '';
-    el('authError').textContent = '';
-    setStatus('Not Ready');
+    await signOut(auth);
+    // Auth state change will handle the rest
   });
 }
 
@@ -251,9 +255,6 @@ function setupWagerListener() {
   unsubscribeWagers = onSnapshot(q, (snap) => {
     state.wagers = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     if (!state.ongoing) renderAreas();
-  }, (error) => {
-    console.error('Wager listener error:', error);
-    setStatus('Error loading wagers: ' + error.message);
   });
 }
 
@@ -278,7 +279,7 @@ function setupWagers() {
 
 /* ====== Create Wager ====== */
 async function createWager() {
-  if (state.ongoing) return;
+  if (state.ongoing || !auth.currentUser) return;
   const stake = Number(el('stake1').value) || 1;
   if (stake < 1) {
     alert("Stake must be at least 1.");
@@ -289,31 +290,22 @@ async function createWager() {
     return;
   }
   const game = state.selectedGame;
-  try {
-    const docRef = await addDoc(collection(db, 'wagers'), {
-      proposer: state.username,
-      game,
-      stake,
-      createdAt: serverTimestamp(),
-      accepted: false
-    });
-    setStatus('Wager created. Waiting for opponent...');
-    // Simulate bot opponent: only accept after 30s if not accepted
-    setTimeout(async () => {
-      try {
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists() && !docSnap.data().accepted) {
-          await deleteDoc(docRef);
-          startMatch(game, stake, { opponentIsBot: true });
-        }
-      } catch (error) {
-        console.error('Bot wager check error:', error);
-      }
-    }, 30000);
-  } catch (error) {
-    console.error('Create wager error:', error);
-    setStatus('Error creating wager: ' + error.message);
-  }
+  const docRef = await addDoc(collection(db, 'wagers'), {
+    proposer: auth.currentUser.uid,
+    game,
+    stake,
+    createdAt: serverTimestamp(),
+    accepted: false
+  });
+  setStatus('Wager created. Waiting for opponent...');
+  // Simulate bot opponent: only accept after 30s if not accepted
+  setTimeout(async () => {
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists() && !docSnap.data().accepted) {
+      await deleteDoc(docRef);
+      startMatch(game, stake, { opponentIsBot: true });
+    }
+  }, 30000);
 }
 
 /* ====== Handle Wager Click ====== */
@@ -322,14 +314,9 @@ async function handleWagerClick(e) {
   if (cancel) {
     const id = cancel.dataset.id;
     const w = state.wagers.find(w => w.id === id);
-    if (w && w.proposer === state.username) {
-      try {
-        await deleteDoc(doc(db, 'wagers', id));
-        setStatus('Wager cancelled.');
-      } catch (error) {
-        console.error('Cancel wager error:', error);
-        alert('Failed to cancel wager: ' + error.message);
-      }
+    if (w && w.proposer === auth.currentUser.uid) {
+      await deleteDoc(doc(db, 'wagers', id));
+      setStatus('Wager cancelled.');
     } else {
       alert("Cannot cancel this wager.");
     }
@@ -340,14 +327,9 @@ async function handleWagerClick(e) {
     const id = accept.dataset.id;
     const w = state.wagers.find(w => w.id === id);
     if (!w) return;
-    if (w.proposer === state.username) { alert('You cannot accept your own wager.'); return; }
-    try {
-      await updateDoc(doc(db, 'wagers', id), { accepted: true });
-      startMatch(w.game, w.stake);
-    } catch (error) {
-      console.error('Accept wager error:', error);
-      alert('Failed to accept wager: ' + error.message);
-    }
+    if (w.proposer === auth.currentUser.uid) { alert('You cannot accept your own wager.'); return; }
+    await updateDoc(doc(db, 'wagers', id), { accepted: true });
+    startMatch(w.game, w.stake);
     return;
   }
 }
@@ -366,13 +348,13 @@ function renderAreas() {
     box.className = 'panel';
     box.style.marginBottom = '12px';
     let actionBtn = '';
-    if (w.proposer === state.username) {
+    if (w.proposer === auth.currentUser?.uid) {
       actionBtn = `<button class="primary cancel-btn" data-id="${w.id}" style="background:#ff6b6b;color:#fff">Cancel</button>`;
     } else {
       actionBtn = `<button class="primary accept-btn" data-id="${w.id}" style="background:#4caf50;color:#fff">Accept</button>`;
     }
     box.innerHTML = `
-      <div>Challenger: ${w.proposer}</div>
+      <div>Challenger: ${w.proposer}</div>  <!-- Note: This shows UID; you could fetch email if needed -->
       <div>Game: ${prettyGameName(w.game)}</div>
       <div>Stake: ${w.stake} tokens</div>
       <div class="controls" style="justify-content: space-around">
@@ -422,6 +404,7 @@ function renderReaction() {
   box.append(text, document.createElement('br'), btn);
   area.appendChild(box);
   let go = false, resolved = false;
+  // Bot reaction helpers
   let botReacted = false;
   let botTimeoutId = null;
   btn.addEventListener('click', () => handleClick());
@@ -436,13 +419,15 @@ function renderReaction() {
     const playerTime = Date.now() - state.currentMatch.startedAt;
     const opponentIsBot = state.currentMatch && state.currentMatch.opponentIsBot;
     if (opponentIsBot) {
+      // If bot already reacted, player loses
       if (botReacted) { finalizeMatch(false, 'Bot reacted faster!'); return; }
+      // Otherwise simulate bot time
       const opponentTime = (botTimeoutId ? (Date.now() - state.currentMatch.startedAt) : playerTime + Math.random() * 500 - 250);
       if (playerTime < opponentTime) finalizeMatch(true, 'You reacted faster!');
       else finalizeMatch(false, 'Bot reacted faster!');
       if (botTimeoutId) clearTimeout(botTimeoutId);
     } else {
-      const opponentTime = playerTime + Math.random() * 500 - 250;
+      const opponentTime = playerTime + Math.random() * 500 - 250; // Simulate opponent
       if (playerTime < opponentTime) finalizeMatch(true, 'You reacted faster!');
       else finalizeMatch(false, 'Opponent reacted faster!');
     }
@@ -452,8 +437,9 @@ function renderReaction() {
     go = true;
     text.textContent = 'GO!';
     btn.disabled = false;
+    // Schedule bot reaction when GO appears
     if (state.currentMatch && state.currentMatch.opponentIsBot) {
-      const botDelay = 200 + Math.floor(Math.random() * 400);
+      const botDelay = 200 + Math.floor(Math.random() * 400); // 200 - 600ms
       botTimeoutId = setTimeout(() => {
         if (resolved) return;
         botReacted = true;
@@ -485,6 +471,7 @@ function renderMathSprint() {
   area.appendChild(box);
   let resolved = false;
   const startTime = Date.now();
+  // Bot answering state
   let botAnswered = false;
   let botAnswer = null;
   const submit = el('submit1');
@@ -502,6 +489,7 @@ function renderMathSprint() {
       resolved = true;
       const opponentIsBot = state.currentMatch && state.currentMatch.opponentIsBot;
       if (opponentIsBot) {
+        // If bot answered correctly earlier, player loses
         if (botAnswered && botAnswer && botAnswer.correct) {
           finalizeMatch(false, 'Bot answered first!');
           return;
@@ -517,14 +505,15 @@ function renderMathSprint() {
     } else {
       resolved = true;
       const d1 = Math.abs(numeric - problem.answer);
-      const d2 = Math.abs((Math.random() * 20 - 10) - problem.answer);
+      const d2 = Math.abs((Math.random() * 20 - 10) - problem.answer); // Simulate opponent
       if (d1 < d2) finalizeMatch(true, 'Both wrong, but you were closer!');
       else finalizeMatch(false, 'Both wrong, opponent was closer!');
     }
   }
+  // If opponent is bot, schedule its answer
   if (state.currentMatch && state.currentMatch.opponentIsBot) {
-    const willBeCorrect = Math.random() < 0.8;
-    const botDelay = 400 + Math.floor(Math.random() * 1600);
+    const willBeCorrect = Math.random() < 0.8; // 80% chance to be correct
+    const botDelay = 400 + Math.floor(Math.random() * 1600); // 400-2000ms
     setTimeout(() => {
       if (resolved) return;
       botAnswered = true;
@@ -603,6 +592,7 @@ function renderTicTacToe() {
     }
     current = 2;
     setStatus('TicTacToe — Opponent\'s turn (O)');
+    // Simulate opponent move
     setTimeout(() => {
       const available = gameBoard.map((v, i) => v === null ? i : null).filter(v => v !== null);
       if (available.length > 0) {
@@ -633,8 +623,11 @@ function renderTicTacToe() {
     }
     return null;
   }
+
+  // Simple TTT bot: try to win, block player, take center, take corners, else random
   function tttBotChooseMove(board, myMark = 2, oppMark = 1) {
     const lines = [ [0,1,2], [3,4,5], [6,7,8], [0,3,6], [1,4,7], [2,5,8], [0,4,8], [2,4,6] ];
+    // helper to find winning/blocking move
     for (const mark of [myMark, oppMark]) {
       for (const [a,b,c] of lines) {
         const vals = [board[a], board[b], board[c]];
@@ -643,9 +636,12 @@ function renderTicTacToe() {
         if (countMark === 2 && empties.length === 1) return empties[0];
       }
     }
+    // center
     if (board[4] === null) return 4;
+    // corners
     const corners = [0,2,6,8].filter(i => board[i] === null);
     if (corners.length > 0) return corners[Math.floor(Math.random() * corners.length)];
+    // fallback: any empty
     const empties = board.map((v,i) => v === null ? i : null).filter(v => v !== null);
     return empties[Math.floor(Math.random() * empties.length)];
   }
