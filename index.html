@@ -204,77 +204,42 @@ function setupAuth() {
     el('signupConfirmPassword').value = '';
   });
 
-// Login
-el('loginBtn').addEventListener('click', async () => {
-  const username = el('loginUsername').value.trim();
-  const password = el('loginPassword').value.trim();
-  try {
-    const userRef = doc(db, 'users', username);
-    const userSnap = await getDoc(userRef);
-    if (userSnap.exists() && userSnap.data().password === password) {
-      state.loggedIn = true;
-      state.username = username;
-      state.balance = userSnap.data().balance || 100;
-      el('loginScreen').style.display = 'none';
-      el('gameScreen').style.display = 'flex';
-      el('playerName').textContent = username;
-      updateBalance();
-      renderAreas();
-      setupWagerListener();
-
-      // ✅ Update last login time in Firestore
-      await updateDoc(userRef, { lastLogin: serverTimestamp() });
-
-    } else {
-      el('authError').textContent = 'Invalid username or password.';
+  // Login
+  el('loginBtn').addEventListener('click', async () => {
+    const email = el('loginUsername').value.trim();
+    const password = el('loginPassword').value.trim();
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      // Auth state change will handle the rest
+    } catch (error) {
+      el('authError').textContent = 'Error: ' + (error.message || 'Login failed');
     }
-  } catch (error) {
-    console.error('Login error:', error);
-    el('authError').textContent = 'Error: ' + error.message;
-  }
-});
+  });
 
-
-// Sign Up
-el('signupBtn').addEventListener('click', async () => {
-  const username = el('signupUsername').value.trim();
-  const password = el('signupPassword').value.trim();
-  const confirmPassword = el('signupConfirmPassword').value.trim();
-  if (!username || !password || !confirmPassword) {
-    el('authError').textContent = 'All fields are required.';
-    return;
-  }
-  if (password !== confirmPassword) {
-    el('authError').textContent = 'Passwords do not match.';
-    return;
-  }
-  try {
-    const userRef = doc(db, 'users', username);
-    const userSnap = await getDoc(userRef);
-    if (userSnap.exists()) {
-      el('authError').textContent = 'Username already taken.';
+  // Sign Up
+  el('signupBtn').addEventListener('click', async () => {
+    const email = el('signupUsername').value.trim();
+    const password = el('signupPassword').value.trim();
+    const confirmPassword = el('signupConfirmPassword').value.trim();
+    if (!email || !password || !confirmPassword) {
+      el('authError').textContent = 'All fields are required.';
       return;
     }
-
-    // Create new user document with more data
-    await setDoc(userRef, {
-      username,                    // <-- Store username explicitly
-      password,                    // (plain text here – for demo; use Firebase Auth for production)
-      balance: 100,                // Initial token balance
-      createdAt: serverTimestamp(),
-      lastLogin: serverTimestamp(),
-      wins: 0,
-      losses: 0,
-      draws: 0
-    });
-
-    el('authError').textContent = 'Sign-up successful! Please log in.';
-    el('showLogin').click(); // Switch to login form
-  } catch (error) {
-    console.error('Signup error:', error);
-    el('authError').textContent = 'Error: ' + error.message;
-  }
-});
+    if (password !== confirmPassword) {
+      el('authError').textContent = 'Passwords do not match.';
+      return;
+    }
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+      // Create Firestore doc
+      await setDoc(doc(db, 'users', user.uid), { balance: 100 });
+      el('authError').textContent = 'Sign-up successful! Please log in.';
+      el('showLogin').click();
+    } catch (error) {
+      el('authError').textContent = 'Error: ' + (error.message || 'Signup failed');
+    }
+  });
 
   // Logout
   el('logoutBtn').addEventListener('click', async () => {
@@ -686,44 +651,31 @@ function renderTicTacToe() {
 /* ====== Finalize Match Results ====== */
 async function finalizeMatch(won, reason = '') {
   const stake = state.currentMatch.stake;
-  const userRef = doc(db, 'users', state.username);
-
   if (won) state.balance += stake * 2;
   updateBalance();
   await updateUserBalance();
-
-  // ✅ Update stats
-  try {
-    await updateDoc(userRef, {
-      [won ? 'wins' : 'losses']: (await getDoc(userRef)).data()[won ? 'wins' : 'losses'] + 1
-    });
-  } catch (err) {
-    console.error('Error updating stats:', err);
-  }
-
   if (won) el('area1').parentElement.classList.add('glow-win');
   concludeMatchUI(won ? `You win! ${reason}` : `Opponent wins! ${reason}`);
 }
 
 async function finalizeDraw(reason = '') {
   const stake = state.currentMatch.stake;
-  const userRef = doc(db, 'users', state.username);
   state.balance += stake;
   updateBalance();
   await updateUserBalance();
-
-  // ✅ Update draw count
-  try {
-    await updateDoc(userRef, {
-      draws: (await getDoc(userRef)).data().draws + 1
-    });
-  } catch (err) {
-    console.error('Error updating draws:', err);
-  }
-
   concludeMatchUI('Draw! ' + reason);
 }
 
+function concludeMatchUI(message) {
+  state.ongoing = false;
+  state.currentMatch = null;
+  setStatus(message);
+  setTimeout(() => {
+    el('area1').innerHTML = '';
+    renderAreas();
+    el('area1').parentElement.classList.remove('glow-win');
+  }, 1600);
+}
 
 /* ====== Init ====== */
 setupAuth();
