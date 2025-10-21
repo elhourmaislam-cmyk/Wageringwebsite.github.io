@@ -54,13 +54,13 @@ button.primary { margin-top: 10px; padding: 10px 14px; border-radius: 10px; bord
   <div class="login-panel" id="authPanel">
     <h2 id="authTitle">Login to Challenge Arena</h2>
     <div id="loginForm">
-      <input id="loginUsername" class="login-input" type="text" placeholder="Username" />
+      <input id="loginUsername" class="login-input" type="email" placeholder="Email" />
       <input id="loginPassword" class="login-input" type="password" placeholder="Password" />
       <button class="primary login-btn" id="loginBtn">Login</button>
       <div class="small muted toggle-btn" id="showSignup">Need an account? Sign Up</div>
     </div>
     <div id="signupForm" style="display: none;">
-      <input id="signupUsername" class="login-input" type="text" placeholder="Username" />
+      <input id="signupUsername" class="login-input" type="email" placeholder="Email" />
       <input id="signupPassword" class="login-input" type="password" placeholder="Password" />
       <input id="signupConfirmPassword" class="login-input" type="password" placeholder="Confirm Password" />
       <button class="primary login-btn" id="signupBtn">Sign Up</button>
@@ -101,14 +101,16 @@ button.primary { margin-top: 10px; padding: 10px 14px; border-radius: 10px; bord
 </div>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-import { getFirestore, doc, getDoc, setDoc, updateDoc, collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, deleteDoc, initializeFirestore, persistentLocalCache, persistentSingleTabManager } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { getFirestore, doc, getDoc, setDoc, updateDoc, collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 // Your web app's Firebase configuration
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
   apiKey: "AIzaSyCxU57etJTjzv2hCqFFYqQyHEQcoebfsHE",
   authDomain: "wagering-59415.firebaseapp.com",
   projectId: "wagering-59415",
-  storageBucket: "wagering-59415.appspot.com",
+  storageBucket: "wagering-59415.firebasestorage.app",
   messagingSenderId: "1063169096719",
   appId: "1:1063169096719:web:e10a094630347b5fffb77a",
   measurementId: "G-PNND9Q37XQ"
@@ -116,14 +118,14 @@ const firebaseConfig = {
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
-const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({ tabManager: persistentSingleTabManager() })
-});
+const auth = getAuth(app);
+const db = getFirestore(app);
 
 /* ====== State ====== */
 const state = {
   loggedIn: false,
-  username: '',
+  userId: '',  // Use UID instead of username
+  username: '',  // We'll set this to email for display
   balance: 100,
   selectedGame: 'reaction',
   ongoing: false,
@@ -139,17 +141,49 @@ let unsubscribeWagers = null;
 
 /* ====== User Balance Update ====== */
 async function updateUserBalance() {
-  if (state.username) {
-    try {
-      await updateDoc(doc(db, 'users', state.username), { balance: state.balance });
-    } catch (error) {
-      console.error('Update balance error:', error);
-    }
+  if (state.userId) {
+    await updateDoc(doc(db, 'users', state.userId), { balance: state.balance });
   }
+}
+
+/* ====== Fetch User Data ====== */
+async function fetchUserData(user) {
+  const userDoc = doc(db, 'users', user.uid);
+  const userSnap = await getDoc(userDoc);
+  if (userSnap.exists()) {
+    state.balance = userSnap.data().balance || 100;
+  } else {
+    // If no doc, create one
+    await setDoc(userDoc, { balance: 100 });
+    state.balance = 100;
+  }
+  updateBalance();
 }
 
 /* ====== Auth System ====== */
 function setupAuth() {
+  // Listen for auth state changes (persists login)
+  onAuthStateChanged(auth, (user) => {
+    if (user) {
+      state.loggedIn = true;
+      state.userId = user.uid;
+      state.username = user.email;  // Use email as display name
+      el('loginScreen').style.display = 'none';
+      el('gameScreen').style.display = 'flex';
+      el('playerName').textContent = state.username;
+      fetchUserData(user);
+      renderAreas();
+      setupWagerListener();
+    } else {
+      state.loggedIn = false;
+      state.userId = '';
+      state.username = '';
+      state.balance = 100;
+      el('gameScreen').style.display = 'none';
+      el('loginScreen').style.display = 'flex';
+    }
+  });
+
   // Toggle between login and signup
   el('showSignup').addEventListener('click', () => {
     el('loginForm').style.display = 'none';
@@ -170,84 +204,84 @@ function setupAuth() {
     el('signupConfirmPassword').value = '';
   });
 
-  // Login
-  el('loginBtn').addEventListener('click', async () => {
-    const username = el('loginUsername').value.trim();
-    const password = el('loginPassword').value.trim();
-    try {
-      const userRef = doc(db, 'users', username);
-      const userSnap = await getDoc(userRef);
-      if (userSnap.exists() && userSnap.data().password === password) {
-        state.loggedIn = true;
-        state.username = username;
-        state.balance = userSnap.data().balance || 100;
-        el('loginScreen').style.display = 'none';
-        el('gameScreen').style.display = 'flex';
-        el('playerName').textContent = username;
-        updateBalance();
-        renderAreas();
-        setupWagerListener();
-      } else {
-        el('authError').textContent = 'Invalid username or password.';
-      }
-    } catch (error) {
-      console.error('Login error:', error);
-      el('authError').textContent = 'Error: ' + error.message;
-    }
-  });
+// Login
+el('loginBtn').addEventListener('click', async () => {
+  const username = el('loginUsername').value.trim();
+  const password = el('loginPassword').value.trim();
+  try {
+    const userRef = doc(db, 'users', username);
+    const userSnap = await getDoc(userRef);
+    if (userSnap.exists() && userSnap.data().password === password) {
+      state.loggedIn = true;
+      state.username = username;
+      state.balance = userSnap.data().balance || 100;
+      el('loginScreen').style.display = 'none';
+      el('gameScreen').style.display = 'flex';
+      el('playerName').textContent = username;
+      updateBalance();
+      renderAreas();
+      setupWagerListener();
 
-  // Sign Up
-  el('signupBtn').addEventListener('click', async () => {
-    const username = el('signupUsername').value.trim();
-    const password = el('signupPassword').value.trim();
-    const confirmPassword = el('signupConfirmPassword').value.trim();
-    if (!username || !password || !confirmPassword) {
-      el('authError').textContent = 'All fields are required.';
+      // ✅ Update last login time in Firestore
+      await updateDoc(userRef, { lastLogin: serverTimestamp() });
+
+    } else {
+      el('authError').textContent = 'Invalid username or password.';
+    }
+  } catch (error) {
+    console.error('Login error:', error);
+    el('authError').textContent = 'Error: ' + error.message;
+  }
+});
+
+
+// Sign Up
+el('signupBtn').addEventListener('click', async () => {
+  const username = el('signupUsername').value.trim();
+  const password = el('signupPassword').value.trim();
+  const confirmPassword = el('signupConfirmPassword').value.trim();
+  if (!username || !password || !confirmPassword) {
+    el('authError').textContent = 'All fields are required.';
+    return;
+  }
+  if (password !== confirmPassword) {
+    el('authError').textContent = 'Passwords do not match.';
+    return;
+  }
+  try {
+    const userRef = doc(db, 'users', username);
+    const userSnap = await getDoc(userRef);
+    if (userSnap.exists()) {
+      el('authError').textContent = 'Username already taken.';
       return;
     }
-    if (password !== confirmPassword) {
-      el('authError').textContent = 'Passwords do not match.';
-      return;
-    }
-    try {
-      const userRef = doc(db, 'users', username);
-      const userSnap = await getDoc(userRef);
-      if (userSnap.exists()) {
-        el('authError').textContent = 'Username already taken.';
-        return;
-      }
-      await setDoc(userRef, { password, balance: 100 });
-      el('authError').textContent = 'Sign-up successful! Please log in.';
-      el('showLogin').click(); // Switch to login form
-    } catch (error) {
-      console.error('Signup error:', error);
-      el('authError').textContent = 'Error: ' + error.message;
-    }
-  });
+
+    // Create new user document with more data
+    await setDoc(userRef, {
+      username,                    // <-- Store username explicitly
+      password,                    // (plain text here – for demo; use Firebase Auth for production)
+      balance: 100,                // Initial token balance
+      createdAt: serverTimestamp(),
+      lastLogin: serverTimestamp(),
+      wins: 0,
+      losses: 0,
+      draws: 0
+    });
+
+    el('authError').textContent = 'Sign-up successful! Please log in.';
+    el('showLogin').click(); // Switch to login form
+  } catch (error) {
+    console.error('Signup error:', error);
+    el('authError').textContent = 'Error: ' + error.message;
+  }
+});
 
   // Logout
   el('logoutBtn').addEventListener('click', async () => {
-    try {
-      await updateUserBalance();
-    } catch (error) {
-      console.error('Logout update error:', error);
-    }
+    await updateUserBalance();
     if (unsubscribeWagers) unsubscribeWagers();
-    state.loggedIn = false;
-    state.username = '';
-    state.balance = 100;
-    state.wagers = [];
-    state.ongoing = false;
-    state.currentMatch = null;
-    el('gameScreen').style.display = 'none';
-    el('loginScreen').style.display = 'flex';
-    el('loginUsername').value = '';
-    el('loginPassword').value = '';
-    el('signupUsername').value = '';
-    el('signupPassword').value = '';
-    el('signupConfirmPassword').value = '';
-    el('authError').textContent = '';
-    setStatus('Not Ready');
+    await signOut(auth);
+    // Auth state change will handle the rest
   });
 }
 
@@ -257,8 +291,6 @@ function setupWagerListener() {
   unsubscribeWagers = onSnapshot(q, (snap) => {
     state.wagers = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     if (!state.ongoing) renderAreas();
-  }, (error) => {
-    console.error('Wager listener error:', error);
   });
 }
 
@@ -283,7 +315,7 @@ function setupWagers() {
 
 /* ====== Create Wager ====== */
 async function createWager() {
-  if (state.ongoing) return;
+  if (state.ongoing || !auth.currentUser) return;
   const stake = Number(el('stake1').value) || 1;
   if (stake < 1) {
     alert("Stake must be at least 1.");
@@ -294,27 +326,22 @@ async function createWager() {
     return;
   }
   const game = state.selectedGame;
-  try {
-    const docRef = await addDoc(collection(db, 'wagers'), {
-      proposer: state.username,
-      game,
-      stake,
-      createdAt: serverTimestamp(),
-      accepted: false
-    });
-    setStatus('Wager created. Waiting for opponent...');
-    // Simulate bot opponent
-    setTimeout(async () => {
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists() && !docSnap.data().accepted) {
-        await deleteDoc(docRef);
-        startMatch(game, stake, { opponentIsBot: true });
-      }
-    }, 30000);
-  } catch (error) {
-    console.error('Create wager error:', error);
-    alert('Error creating wager: ' + error.message);
-  }
+  const docRef = await addDoc(collection(db, 'wagers'), {
+    proposer: auth.currentUser.uid,
+    game,
+    stake,
+    createdAt: serverTimestamp(),
+    accepted: false
+  });
+  setStatus('Wager created. Waiting for opponent...');
+  // Simulate bot opponent: only accept after 30s if not accepted
+  setTimeout(async () => {
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists() && !docSnap.data().accepted) {
+      await deleteDoc(docRef);
+      startMatch(game, stake, { opponentIsBot: true });
+    }
+  }, 30000);
 }
 
 /* ====== Handle Wager Click ====== */
@@ -323,13 +350,9 @@ async function handleWagerClick(e) {
   if (cancel) {
     const id = cancel.dataset.id;
     const w = state.wagers.find(w => w.id === id);
-    if (w && w.proposer === state.username) {
-      try {
-        await deleteDoc(doc(db, 'wagers', id));
-        setStatus('Wager cancelled.');
-      } catch (error) {
-        console.error('Cancel wager error:', error);
-      }
+    if (w && w.proposer === auth.currentUser.uid) {
+      await deleteDoc(doc(db, 'wagers', id));
+      setStatus('Wager cancelled.');
     } else {
       alert("Cannot cancel this wager.");
     }
@@ -340,13 +363,9 @@ async function handleWagerClick(e) {
     const id = accept.dataset.id;
     const w = state.wagers.find(w => w.id === id);
     if (!w) return;
-    if (w.proposer === state.username) { alert('You cannot accept your own wager.'); return; }
-    try {
-      await updateDoc(doc(db, 'wagers', id), { accepted: true });
-      startMatch(w.game, w.stake);
-    } catch (error) {
-      console.error('Accept wager error:', error);
-    }
+    if (w.proposer === auth.currentUser.uid) { alert('You cannot accept your own wager.'); return; }
+    await updateDoc(doc(db, 'wagers', id), { accepted: true });
+    startMatch(w.game, w.stake);
     return;
   }
 }
@@ -365,13 +384,13 @@ function renderAreas() {
     box.className = 'panel';
     box.style.marginBottom = '12px';
     let actionBtn = '';
-    if (w.proposer === state.username) {
+    if (w.proposer === auth.currentUser?.uid) {
       actionBtn = `<button class="primary cancel-btn" data-id="${w.id}" style="background:#ff6b6b;color:#fff">Cancel</button>`;
     } else {
       actionBtn = `<button class="primary accept-btn" data-id="${w.id}" style="background:#4caf50;color:#fff">Accept</button>`;
     }
     box.innerHTML = `
-      <div>Challenger: ${w.proposer}</div>
+      <div>Challenger: ${w.proposer}</div>  <!-- Note: This shows UID; you could fetch email if needed -->
       <div>Game: ${prettyGameName(w.game)}</div>
       <div>Stake: ${w.stake} tokens</div>
       <div class="controls" style="justify-content: space-around">
@@ -667,31 +686,44 @@ function renderTicTacToe() {
 /* ====== Finalize Match Results ====== */
 async function finalizeMatch(won, reason = '') {
   const stake = state.currentMatch.stake;
+  const userRef = doc(db, 'users', state.username);
+
   if (won) state.balance += stake * 2;
   updateBalance();
   await updateUserBalance();
+
+  // ✅ Update stats
+  try {
+    await updateDoc(userRef, {
+      [won ? 'wins' : 'losses']: (await getDoc(userRef)).data()[won ? 'wins' : 'losses'] + 1
+    });
+  } catch (err) {
+    console.error('Error updating stats:', err);
+  }
+
   if (won) el('area1').parentElement.classList.add('glow-win');
   concludeMatchUI(won ? `You win! ${reason}` : `Opponent wins! ${reason}`);
 }
 
 async function finalizeDraw(reason = '') {
   const stake = state.currentMatch.stake;
+  const userRef = doc(db, 'users', state.username);
   state.balance += stake;
   updateBalance();
   await updateUserBalance();
+
+  // ✅ Update draw count
+  try {
+    await updateDoc(userRef, {
+      draws: (await getDoc(userRef)).data().draws + 1
+    });
+  } catch (err) {
+    console.error('Error updating draws:', err);
+  }
+
   concludeMatchUI('Draw! ' + reason);
 }
 
-function concludeMatchUI(message) {
-  state.ongoing = false;
-  state.currentMatch = null;
-  setStatus(message);
-  setTimeout(() => {
-    el('area1').innerHTML = '';
-    renderAreas();
-    el('area1').parentElement.classList.remove('glow-win');
-  }, 1600);
-}
 
 /* ====== Init ====== */
 setupAuth();
