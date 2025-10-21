@@ -99,7 +99,25 @@ button.primary { margin-top: 10px; padding: 10px 14px; border-radius: 10px; bord
     <div class="status" id="status1">Not Ready</div>
   </div>
 </div>
-<script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import { getFirestore, doc, getDoc, setDoc, updateDoc, collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+
+// Your web app's Firebase configuration
+const firebaseConfig = {
+  apiKey: "AIzaSyCxU57etJTjzv2hCqFFYqQyHEQcoebfsHE",
+  authDomain: "wagering-59415.firebaseapp.com",
+  projectId: "wagering-59415",
+  storageBucket: "wagering-59415.appspot.com",
+  messagingSenderId: "1063169096719",
+  appId: "1:1063169096719:web:e10a094630347b5fffb77a",
+  measurementId: "G-PNND9Q37XQ"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
 /* ====== State ====== */
 const state = {
   loggedIn: false,
@@ -115,36 +133,17 @@ const state = {
 const el = id => document.getElementById(id);
 function setStatus(txt) { el('status1').textContent = txt; }
 function updateBalance() { el('bal1').textContent = state.balance; }
+let unsubscribeWagers = null;
 
-/* ====== User Storage ====== */
-function loadUsers() {
-  return JSON.parse(localStorage.getItem('users') || '{}');
-}
-
-function saveUsers(users) {
-  localStorage.setItem('users', JSON.stringify(users));
-}
-
-function loadUserBalance(username) {
-  const balances = JSON.parse(localStorage.getItem('userBalances') || '{}');
-  return balances[username] || 100; // Default balance
-}
-
-function saveUserBalance(username, balance) {
-  const balances = JSON.parse(localStorage.getItem('userBalances') || '{}');
-  balances[username] = balance;
-  localStorage.setItem('userBalances', JSON.stringify(balances));
+/* ====== User Balance Update ====== */
+async function updateUserBalance() {
+  if (state.username) {
+    await updateDoc(doc(db, 'users', state.username), { balance: state.balance });
+  }
 }
 
 /* ====== Auth System ====== */
 function setupAuth() {
-  // Initialize users if none exist (for testing)
-  const users = loadUsers();
-  if (Object.keys(users).length === 0) {
-    users['admin'] = 'password123'; // Default user
-    saveUsers(users);
-  }
-
   // Toggle between login and signup
   el('showSignup').addEventListener('click', () => {
     el('loginForm').style.display = 'none';
@@ -166,31 +165,31 @@ function setupAuth() {
   });
 
   // Login
-  el('loginBtn').addEventListener('click', () => {
+  el('loginBtn').addEventListener('click', async () => {
     const username = el('loginUsername').value.trim();
     const password = el('loginPassword').value.trim();
-    const users = loadUsers();
-    if (users[username] && users[username] === password) {
+    const userRef = doc(db, 'users', username);
+    const userSnap = await getDoc(userRef);
+    if (userSnap.exists() && userSnap.data().password === password) {
       state.loggedIn = true;
       state.username = username;
-      state.balance = loadUserBalance(username);
+      state.balance = userSnap.data().balance || 100;
       el('loginScreen').style.display = 'none';
       el('gameScreen').style.display = 'flex';
       el('playerName').textContent = username;
       updateBalance();
       renderAreas();
+      setupWagerListener();
     } else {
       el('authError').textContent = 'Invalid username or password.';
     }
   });
 
   // Sign Up
-  el('signupBtn').addEventListener('click', () => {
+  el('signupBtn').addEventListener('click', async () => {
     const username = el('signupUsername').value.trim();
     const password = el('signupPassword').value.trim();
     const confirmPassword = el('signupConfirmPassword').value.trim();
-    const users = loadUsers();
-
     if (!username || !password || !confirmPassword) {
       el('authError').textContent = 'All fields are required.';
       return;
@@ -199,21 +198,21 @@ function setupAuth() {
       el('authError').textContent = 'Passwords do not match.';
       return;
     }
-    if (users[username]) {
+    const userRef = doc(db, 'users', username);
+    const userSnap = await getDoc(userRef);
+    if (userSnap.exists()) {
       el('authError').textContent = 'Username already taken.';
       return;
     }
-
-    users[username] = password;
-    saveUsers(users);
-    saveUserBalance(username, 100); // Initial balance
+    await setDoc(userRef, { password, balance: 100 });
     el('authError').textContent = 'Sign-up successful! Please log in.';
     el('showLogin').click(); // Switch to login form
   });
 
   // Logout
-  el('logoutBtn').addEventListener('click', () => {
-    saveUserBalance(state.username, state.balance);
+  el('logoutBtn').addEventListener('click', async () => {
+    await updateUserBalance();
+    if (unsubscribeWagers) unsubscribeWagers();
     state.loggedIn = false;
     state.username = '';
     state.balance = 100;
@@ -229,6 +228,15 @@ function setupAuth() {
     el('signupConfirmPassword').value = '';
     el('authError').textContent = '';
     setStatus('Not Ready');
+  });
+}
+
+/* ====== Wager Listener ====== */
+function setupWagerListener() {
+  const q = query(collection(db, 'wagers'), where('accepted', '==', false), orderBy('createdAt', 'desc'));
+  unsubscribeWagers = onSnapshot(q, (snap) => {
+    state.wagers = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    if (!state.ongoing) renderAreas();
   });
 }
 
@@ -252,7 +260,7 @@ function setupWagers() {
 }
 
 /* ====== Create Wager ====== */
-function createWager() {
+async function createWager() {
   if (state.ongoing) return;
   const stake = Number(el('stake1').value) || 1;
   if (stake < 1) {
@@ -264,33 +272,47 @@ function createWager() {
     return;
   }
   const game = state.selectedGame;
-  state.wagers.push({ proposer: state.username, game, stake });
+  const docRef = await addDoc(collection(db, 'wagers'), {
+    proposer: state.username,
+    game,
+    stake,
+    createdAt: serverTimestamp(),
+    accepted: false
+  });
   setStatus('Wager created. Waiting for opponent...');
-  renderAreas();
-  // Simulate opponent accepting wager after a delay
-  setTimeout(() => {
-    if (state.wagers.length > 0) {
-      const wager = state.wagers[0];
-      state.wagers = [];
-      renderAreas();
-      startMatch(wager.game, wager.stake);
+  // Simulate bot opponent: only accept after 30s if not accepted
+  setTimeout(async () => {
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists() && !docSnap.data().accepted) {
+      await deleteDoc(docRef);
+      startMatch(game, stake, { opponentIsBot: true });
     }
-  }, 2000);
+  }, 30000);
 }
 
 /* ====== Handle Wager Click ====== */
-function handleWagerClick(e) {
+async function handleWagerClick(e) {
   const cancel = e.target.closest('.cancel-btn');
-  if (cancel && !state.ongoing) {
-    const idx = Number(cancel.dataset.idx);
-    const w = state.wagers[idx];
+  if (cancel) {
+    const id = cancel.dataset.id;
+    const w = state.wagers.find(w => w.id === id);
     if (w && w.proposer === state.username) {
-      state.wagers.splice(idx, 1);
-      renderAreas();
+      await deleteDoc(doc(db, 'wagers', id));
       setStatus('Wager cancelled.');
     } else {
       alert("Cannot cancel this wager.");
     }
+    return;
+  }
+  const accept = e.target.closest('.accept-btn');
+  if (accept) {
+    const id = accept.dataset.id;
+    const w = state.wagers.find(w => w.id === id);
+    if (!w) return;
+    if (w.proposer === state.username) { alert('You cannot accept your own wager.'); return; }
+    await updateDoc(doc(db, 'wagers', id), { accepted: true });
+    startMatch(w.game, w.stake);
+    return;
   }
 }
 
@@ -303,27 +325,35 @@ function renderAreas() {
     areaEl.innerHTML = '<div class="center muted">No open challenges. Create one!</div>';
     return;
   }
-  state.wagers.forEach((w, idx) => {
+  state.wagers.forEach(w => {
     const box = document.createElement('div');
     box.className = 'panel';
     box.style.marginBottom = '12px';
+    let actionBtn = '';
+    if (w.proposer === state.username) {
+      actionBtn = `<button class="primary cancel-btn" data-id="${w.id}" style="background:#ff6b6b;color:#fff">Cancel</button>`;
+    } else {
+      actionBtn = `<button class="primary accept-btn" data-id="${w.id}" style="background:#4caf50;color:#fff">Accept</button>`;
+    }
     box.innerHTML = `
       <div>Challenger: ${w.proposer}</div>
       <div>Game: ${prettyGameName(w.game)}</div>
       <div>Stake: ${w.stake} tokens</div>
       <div class="controls" style="justify-content: space-around">
-        <button class="primary cancel-btn" data-idx="${idx}" style="background:#ff6b6b;color:#fff">Cancel</button>
+        ${actionBtn}
       </div>`;
     areaEl.appendChild(box);
   });
 }
 
 /* ====== Match Lifecycle ====== */
-function startMatch(game, stake) {
+async function startMatch(game, stake, opts = {}) {
+  const opponentIsBot = !!opts.opponentIsBot;
   state.ongoing = true;
-  state.currentMatch = { game, stake, startedAt: Date.now() };
+  state.currentMatch = { game, stake, startedAt: Date.now(), opponentIsBot };
   state.balance -= stake;
   updateBalance();
+  await updateUserBalance();
   setStatus('Match starting: ' + prettyGameName(game));
   renderGameUI(game);
 }
@@ -356,6 +386,9 @@ function renderReaction() {
   box.append(text, document.createElement('br'), btn);
   area.appendChild(box);
   let go = false, resolved = false;
+  // Bot reaction helpers
+  let botReacted = false;
+  let botTimeoutId = null;
   btn.addEventListener('click', () => handleClick());
   function handleClick() {
     if (resolved) return;
@@ -366,11 +399,19 @@ function renderReaction() {
     }
     resolved = true;
     const playerTime = Date.now() - state.currentMatch.startedAt;
-    const opponentTime = playerTime + Math.random() * 500 - 250; // Simulate opponent
-    if (playerTime < opponentTime) {
-      finalizeMatch(true, 'You reacted faster!');
+    const opponentIsBot = state.currentMatch && state.currentMatch.opponentIsBot;
+    if (opponentIsBot) {
+      // If bot already reacted, player loses
+      if (botReacted) { finalizeMatch(false, 'Bot reacted faster!'); return; }
+      // Otherwise simulate bot time
+      const opponentTime = (botTimeoutId ? (Date.now() - state.currentMatch.startedAt) : playerTime + Math.random() * 500 - 250);
+      if (playerTime < opponentTime) finalizeMatch(true, 'You reacted faster!');
+      else finalizeMatch(false, 'Bot reacted faster!');
+      if (botTimeoutId) clearTimeout(botTimeoutId);
     } else {
-      finalizeMatch(false, 'Opponent reacted faster!');
+      const opponentTime = playerTime + Math.random() * 500 - 250; // Simulate opponent
+      if (playerTime < opponentTime) finalizeMatch(true, 'You reacted faster!');
+      else finalizeMatch(false, 'Opponent reacted faster!');
     }
   }
   const delay = 1200 + Math.floor(Math.random() * 2000);
@@ -378,6 +419,16 @@ function renderReaction() {
     go = true;
     text.textContent = 'GO!';
     btn.disabled = false;
+    // Schedule bot reaction when GO appears
+    if (state.currentMatch && state.currentMatch.opponentIsBot) {
+      const botDelay = 200 + Math.floor(Math.random() * 400); // 200 - 600ms
+      botTimeoutId = setTimeout(() => {
+        if (resolved) return;
+        botReacted = true;
+        resolved = true;
+        finalizeMatch(false, 'Bot reacted faster!');
+      }, botDelay);
+    }
   }, delay);
   setTimeout(() => {
     if (!resolved) {
@@ -402,6 +453,9 @@ function renderMathSprint() {
   area.appendChild(box);
   let resolved = false;
   const startTime = Date.now();
+  // Bot answering state
+  let botAnswered = false;
+  let botAnswer = null;
   const submit = el('submit1');
   const inp = el('input1');
   submit.addEventListener('click', () => handleSubmit(inp.value));
@@ -415,22 +469,42 @@ function renderMathSprint() {
     msg.textContent = correct ? `Correct! (${time} ms)` : `Wrong (${time} ms)`;
     if (correct) {
       resolved = true;
-      const opponentTime = time + Math.random() * 1000 - 500;
-      if (time < opponentTime) {
-        finalizeMatch(true, `Answered correctly in ${time} ms`);
+      const opponentIsBot = state.currentMatch && state.currentMatch.opponentIsBot;
+      if (opponentIsBot) {
+        // If bot answered correctly earlier, player loses
+        if (botAnswered && botAnswer && botAnswer.correct) {
+          finalizeMatch(false, 'Bot answered first!');
+          return;
+        }
+        const opponentTime = botAnswered && botAnswer ? botAnswer.time : (time + Math.random() * 1000 - 500);
+        if (time < opponentTime) finalizeMatch(true, `Answered correctly in ${time} ms`);
+        else finalizeMatch(false, 'Bot answered faster!');
       } else {
-        finalizeMatch(false, 'Opponent answered faster!');
+        const opponentTime = time + Math.random() * 1000 - 500;
+        if (time < opponentTime) finalizeMatch(true, `Answered correctly in ${time} ms`);
+        else finalizeMatch(false, 'Opponent answered faster!');
       }
     } else {
       resolved = true;
       const d1 = Math.abs(numeric - problem.answer);
       const d2 = Math.abs((Math.random() * 20 - 10) - problem.answer); // Simulate opponent
-      if (d1 < d2) {
-        finalizeMatch(true, 'Both wrong, but you were closer!');
-      } else {
-        finalizeMatch(false, 'Both wrong, opponent was closer!');
-      }
+      if (d1 < d2) finalizeMatch(true, 'Both wrong, but you were closer!');
+      else finalizeMatch(false, 'Both wrong, opponent was closer!');
     }
+  }
+  // If opponent is bot, schedule its answer
+  if (state.currentMatch && state.currentMatch.opponentIsBot) {
+    const willBeCorrect = Math.random() < 0.8; // 80% chance to be correct
+    const botDelay = 400 + Math.floor(Math.random() * 1600); // 400-2000ms
+    setTimeout(() => {
+      if (resolved) return;
+      botAnswered = true;
+      botAnswer = { correct: willBeCorrect, time: Date.now() - startTime };
+      if (willBeCorrect) {
+        resolved = true;
+        finalizeMatch(false, 'Bot answered correctly first!');
+      }
+    }, botDelay);
   }
   setTimeout(() => {
     if (!resolved) {
@@ -504,7 +578,10 @@ function renderTicTacToe() {
     setTimeout(() => {
       const available = gameBoard.map((v, i) => v === null ? i : null).filter(v => v !== null);
       if (available.length > 0) {
-        const move = available[Math.floor(Math.random() * available.length)];
+        const opponentIsBot = state.currentMatch && state.currentMatch.opponentIsBot;
+        let move;
+        if (opponentIsBot) move = tttBotChooseMove(gameBoard, 2, 1);
+        else move = available[Math.floor(Math.random() * available.length)];
         gameBoard[move] = 2;
         syncRender();
         const winner = checkTTTWinner(gameBoard);
@@ -528,21 +605,45 @@ function renderTicTacToe() {
     }
     return null;
   }
+
+  // Simple TTT bot: try to win, block player, take center, take corners, else random
+  function tttBotChooseMove(board, myMark = 2, oppMark = 1) {
+    const lines = [ [0,1,2], [3,4,5], [6,7,8], [0,3,6], [1,4,7], [2,5,8], [0,4,8], [2,4,6] ];
+    // helper to find winning/blocking move
+    for (const mark of [myMark, oppMark]) {
+      for (const [a,b,c] of lines) {
+        const vals = [board[a], board[b], board[c]];
+        const empties = [a,b,c].filter(i => board[i] === null);
+        const countMark = vals.filter(v => v === mark).length;
+        if (countMark === 2 && empties.length === 1) return empties[0];
+      }
+    }
+    // center
+    if (board[4] === null) return 4;
+    // corners
+    const corners = [0,2,6,8].filter(i => board[i] === null);
+    if (corners.length > 0) return corners[Math.floor(Math.random() * corners.length)];
+    // fallback: any empty
+    const empties = board.map((v,i) => v === null ? i : null).filter(v => v !== null);
+    return empties[Math.floor(Math.random() * empties.length)];
+  }
 }
 
 /* ====== Finalize Match Results ====== */
-function finalizeMatch(won, reason = '') {
+async function finalizeMatch(won, reason = '') {
   const stake = state.currentMatch.stake;
   if (won) state.balance += stake * 2;
   updateBalance();
+  await updateUserBalance();
   if (won) el('area1').parentElement.classList.add('glow-win');
   concludeMatchUI(won ? `You win! ${reason}` : `Opponent wins! ${reason}`);
 }
 
-function finalizeDraw(reason = '') {
+async function finalizeDraw(reason = '') {
   const stake = state.currentMatch.stake;
   state.balance += stake;
   updateBalance();
+  await updateUserBalance();
   concludeMatchUI('Draw! ' + reason);
 }
 
