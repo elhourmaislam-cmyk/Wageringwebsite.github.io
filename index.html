@@ -100,8 +100,8 @@ button.primary { margin-top: 10px; padding: 10px 14px; border-radius: 10px; bord
   </div>
 </div>
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
-import { getFirestore, doc, getDoc, setDoc, updateDoc, collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, deleteDoc, disableNetwork } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, doc, getDoc, setDoc, updateDoc, collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, deleteDoc, disableNetwork } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 // Firebase configuration
 const firebaseConfig = {
@@ -122,6 +122,20 @@ const db = getFirestore(app);
 disableNetwork(db).catch((error) => {
   console.error('Error disabling Firestore offline persistence:', error);
 });
+
+// Test Firestore connection
+async function testFirestoreConnection() {
+  try {
+    const testRef = doc(db, 'test', 'ping');
+    await setDoc(testRef, { timestamp: Date.now() });
+    console.log('Firestore connection test successful');
+    return true;
+  } catch (error) {
+    console.error('Firestore connection test failed:', error, { code: error.code, message: error.message });
+    return false;
+  }
+}
+testFirestoreConnection();
 
 /* ====== State ====== */
 const state = {
